@@ -1,0 +1,110 @@
+import os
+import requests
+import logging
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
+
+# Bot settings
+TELEGRAM_TOKEN = '7847381363:AAE3PdNvXAVNUWnwM5V5Y52-aWC5mRc7EwI'
+REMOVE_BG_API_KEY = 'KgNrp1Bg2Yx6qb1yKxinyLMg'
+
+# Configure logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+
+async def start(update: Update, context: CallbackContext):
+    """Sends a welcome message when the /start command is used."""
+    await update.message.reply_text(
+        "🌟 *Welcome to the Background Remover Bot!* 🌟\n\n"
+        "Send me a photo, and I will remove the background for you.\n\n"
+        "You can also use /help to see how to use this bot.",
+        parse_mode="Markdown"
+    )
+
+
+async def help_command(update: Update, context: CallbackContext):
+    """Sends a message explaining how to use the bot."""
+    await update.message.reply_text(
+        "📸 *How to use this bot:*\n\n"
+        "1. Send me a photo (as a file or image).\n"
+        "2. I will remove the background and send you the result.\n\n"
+        "⚠️ *Note:* The photo should have a clear subject for best results.",
+        parse_mode="Markdown"
+    )
+
+
+async def remove_background(update: Update, context: CallbackContext):
+    """Processes the sent photo and removes the background."""
+    try:
+        # Notify the user that the photo is being processed
+        await update.message.reply_text("⏳ Processing your photo...")
+
+        # Download the sent photo
+        if update.message.photo:
+            photo_file = await update.message.photo[-1].get_file()
+        elif update.message.document:
+            # Check if the document is an image
+            if not update.message.document.mime_type.startswith('image/'):
+                await update.message.reply_text("❌ Please send a valid photo.")
+                return
+            photo_file = await update.message.document.get_file()
+        else:
+            await update.message.reply_text("❌ Please send a valid photo.")
+            return
+
+        # Save the photo temporarily
+        photo_path = 'temp_image.jpg'
+        await photo_file.download_to_drive(photo_path)
+
+        # Send the photo to remove.bg API
+        response = requests.post(
+            'https://api.remove.bg/v1.0/removebg',
+            files={'image_file': open(photo_path, 'rb')},
+            data={'size': 'auto'},
+            headers={'X-Api-Key': REMOVE_BG_API_KEY}
+        )
+
+        # Handle the response
+        if response.status_code == 200:
+            # Save the processed image
+            output_path = 'no_bg.png'
+            with open(output_path, 'wb') as out:
+                out.write(response.content)
+
+            # Send the resulting image
+            await update.message.reply_document(
+                document=open(output_path, 'rb'),
+                caption="✅ Here's your photo with the background removed!"
+            )
+
+            # Clean up temporary files
+            os.remove(photo_path)
+            os.remove(output_path)
+        else:
+            await update.message.reply_text(f"❌ Error processing the photo: {response.text}")
+
+    except Exception as e:
+        logger.error(f"An error occurred: {str(e)}")
+        await update.message.reply_text("❌ An error occurred while processing your photo. Please try again.")
+
+
+def main():
+    """Start the bot."""
+    # Create and run the bot
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
+
+    # Add handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, remove_background))
+
+    # Start listening for updates
+    application.run_polling()
+
+
+if __name__ == '__main__':
+    main()
