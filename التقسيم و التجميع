@@ -1,0 +1,169 @@
+import os
+import io
+import threading
+import tkinter as tk
+from tkinter import filedialog, messagebox, font, simpledialog
+from tkinter import ttk
+from PyPDF2 import PdfReader, PdfWriter
+
+# الحد الأقصى لحجم كل ملف (10 ميجابايت)
+MAX_SIZE = 10 * 1024 * 1024
+
+
+def split_pdf(file_path, progress_var, progress_bar, status_label):
+    try:
+        reader = PdfReader(file_path)
+        total_pages = len(reader.pages)
+
+        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+        output_folder = os.path.join(desktop, "PDF_Split_Output")
+        if not os.path.exists(output_folder):
+            os.makedirs(output_folder)
+
+        part = 1
+        current_writer = PdfWriter()
+        pages_in_part = 0
+
+        progress_var.set(0)
+        progress_bar.config(maximum=total_pages)
+
+        for i in range(total_pages):
+            status_label.config(text=f"معالجة الصفحة {i + 1} من {total_pages}...")
+            current_writer.add_page(reader.pages[i])
+            pages_in_part += 1
+
+            temp_stream = io.BytesIO()
+            current_writer.write(temp_stream)
+            temp_size = temp_stream.tell()
+
+            if temp_size > MAX_SIZE and pages_in_part > 1:
+                writer_for_save = PdfWriter()
+                start_index = i - pages_in_part + 1
+                for j in range(pages_in_part - 1):
+                    writer_for_save.add_page(reader.pages[start_index + j])
+                save_path = os.path.join(output_folder, f"part_{part}.pdf")
+                with open(save_path, "wb") as f_out:
+                    writer_for_save.write(f_out)
+                part += 1
+                current_writer = PdfWriter()
+                current_writer.add_page(reader.pages[i])
+                pages_in_part = 1
+
+            progress_var.set(i + 1)
+            progress_bar.update_idletasks()
+
+        if pages_in_part > 0:
+            save_path = os.path.join(output_folder, f"part_{part}.pdf")
+            with open(save_path, "wb") as f_out:
+                current_writer.write(f_out)
+
+        status_label.config(text="اكتمل التقسيم بنجاح!")
+        messagebox.showinfo("تم", f"تم تقسيم الملف بنجاح.\nتم إنشاء الملفات في:\n{output_folder}")
+    except Exception as e:
+        messagebox.showerror("خطأ", f"حدث خطأ أثناء تقسيم الملف:\n{str(e)}")
+        status_label.config(text="حدث خطأ أثناء التقسيم.")
+
+
+def select_file(progress_var, progress_bar, status_label):
+    file_path = filedialog.askopenfilename(
+        title="اختر ملف PDF",
+        filetypes=[("ملفات PDF", "*.pdf")]
+    )
+    if file_path:
+        threading.Thread(target=split_pdf, args=(file_path, progress_var, progress_bar, status_label),
+                         daemon=True).start()
+
+
+def merge_pdfs(progress_var, progress_bar, status_label):
+    file_paths = filedialog.askopenfilenames(
+        title="اختر ملفات PDF لدمجها",
+        filetypes=[("ملفات PDF", "*.pdf")]
+    )
+
+    if not file_paths:
+        return
+
+    file_name = simpledialog.askstring("اسم الملف", "أدخل اسم الملف المدمج (بدون .pdf):")
+    if not file_name:
+        messagebox.showwarning("تنبيه", "يجب إدخال اسم صالح للملف.")
+        return
+
+    try:
+        status_label.config(text="جاري دمج الملفات...")
+        progress_var.set(0)
+        progress_bar.config(maximum=len(file_paths))
+
+        merger = PdfWriter()
+
+        for i, path in enumerate(file_paths):
+            reader = PdfReader(path)
+            for page in reader.pages:
+                merger.add_page(page)
+            progress_var.set(i + 1)
+            progress_bar.update_idletasks()
+
+        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+        output_folder = os.path.join(desktop, "PDF_Merge_Output")
+        os.makedirs(output_folder, exist_ok=True)
+
+        output_path = os.path.join(output_folder, f"{file_name}.pdf")
+        with open(output_path, "wb") as f_out:
+            merger.write(f_out)
+
+        status_label.config(text="تم الدمج بنجاح!")
+        messagebox.showinfo("تم", f"تم دمج الملفات بنجاح.\nتم حفظ الملف باسم:\n{output_path}")
+    except Exception as e:
+        messagebox.showerror("خطأ", f"حدث خطأ أثناء دمج الملفات:\n{str(e)}")
+        status_label.config(text="حدث خطأ أثناء الدمج.")
+
+
+# إنشاء نافذة التطبيق
+root = tk.Tk()
+root.title("PDF Splitter - برنامج تقسيم ودمج ملفات PDF")
+root.geometry("600x500")
+root.configure(bg="#F0F8FF")
+
+# تنسيق
+style = ttk.Style(root)
+style.theme_use('clam')
+style.configure("TButton", font=("Helvetica", 12), padding=6)
+style.configure("TLabel", font=("Helvetica", 12), background="#F0F8FF")
+style.configure("TProgressbar", thickness=20)
+
+# عنوان
+try:
+    title_font = font.Font(family="Segoe Script", size=26, weight="bold")
+except Exception:
+    title_font = font.Font(family="Helvetica", size=26, weight="bold")
+
+title_label = tk.Label(root, text="PDF Splitter", bg="#F0F8FF", fg="#003366", font=title_font)
+title_label.pack(pady=20)
+
+# زر التقسيم
+select_button = ttk.Button(root, text="اختر ملف PDF للتقسيم",
+                           command=lambda: select_file(progress_var, progress_bar, status_label))
+select_button.pack(pady=10)
+
+# زر الدمج
+merge_button = ttk.Button(root, text="دمج ملفات PDF",
+                          command=lambda: merge_pdfs(progress_var, progress_bar, status_label))
+merge_button.pack(pady=10)
+
+# شريط التقدم
+progress_var = tk.IntVar()
+progress_bar = ttk.Progressbar(root, orient="horizontal", length=400, mode="determinate", variable=progress_var)
+progress_bar.pack(pady=20)
+
+# حالة العملية
+status_label = tk.Label(root, text="انتظر...", bg="#F0F8FF", fg="#003366", font=("Helvetica", 12))
+status_label.pack(pady=10)
+
+# التعليمات
+instructions = tk.Label(root,
+                        text="يقوم البرنامج بتقسيم ملف PDF إلى أجزاء لا يتجاوز كل منها 10 ميجابايت.\n"
+                             "ويمكنك أيضًا دمج عدة ملفات PDF في ملف واحد باسم مخصص.\n"
+                             "يتم إنشاء الملفات الناتجة على سطح المكتب تلقائيًا.",
+                        bg="#F0F8FF", fg="#003366", font=("Helvetica", 12), justify="center")
+instructions.pack(pady=10)
+
+root.mainloop()
